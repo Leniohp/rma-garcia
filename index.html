@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lista de Solicitações RMA — Grupo Garcia</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#1a2230; --panel2:#222d3d; --ink:#e8edf4;
+    --muted:#8a98ad; --line:#2c3a4d; --head:#16202e;
+    --ok:#1f9d55; --ok-bg:#13351f; --pending-ink:#e06464;
+    --accent:#d9a441;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:Georgia,'Times New Roman',serif;-webkit-font-smoothing:antialiased}
+  header{padding:22px 32px 18px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#16202e,#0f1419)}
+  h1{margin:0;font-size:24px;letter-spacing:.3px}
+  .sub{color:var(--muted);font-size:13px;margin-top:4px;font-family:Arial,sans-serif}
+  .bar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:14px;font-family:Arial,sans-serif}
+  select,button,input{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 14px;font-size:14px;font-family:Arial,sans-serif}
+  button{cursor:pointer}
+  button.primary{background:var(--accent);color:#1a1206;border:none;font-weight:bold}
+  .legend{display:flex;gap:16px;color:var(--muted);font-size:13px;margin-left:auto;align-items:center}
+  .dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+  .dot.ok{background:var(--ok)} .dot.pen{background:var(--pending-ink)}
+  .pessoas{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;font-family:Arial,sans-serif}
+  .pessoas button{background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:20px;padding:8px 16px;font-size:13px}
+  .pessoas button.active{background:var(--accent);color:#1a1206;border-color:var(--accent);font-weight:bold}
+  .wrap{padding:22px 32px 60px;overflow-x:auto}
+  table{border-collapse:separate;border-spacing:0;width:100%;min-width:1500px;font-family:Arial,sans-serif}
+  th,td{border-bottom:1px solid var(--line);padding:0;text-align:center;font-size:13px}
+  thead th{background:var(--head);color:var(--ink);padding:11px 7px;font-weight:bold;position:sticky;top:0;border-bottom:2px solid var(--accent)}
+  .doccol{text-align:left;min-width:300px;max-width:340px;position:sticky;left:0;background:var(--head);z-index:2}
+  td.doc{text-align:left;padding:9px 12px;font-size:12px;line-height:1.35;position:sticky;left:0;background:var(--bg);z-index:1;min-width:300px;max-width:340px}
+  td.doc .n{color:var(--accent);font-weight:bold;margin-right:5px}
+  td.cell{width:60px;height:50px;cursor:pointer;position:relative;transition:.15s;border-left:1px solid var(--line)}
+  td.cell:hover{outline:2px solid var(--accent);outline-offset:-2px}
+  td.cell.ok{background:var(--ok-bg)}
+  .badge{font-size:11px;font-weight:bold}
+  .badge.ok{color:#4fd17e}
+  .badge.pen{color:var(--pending-ink)}
+  .fname{display:block;font-size:8.5px;color:var(--muted);max-width:54px;margin:2px auto 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50;font-family:Arial,sans-serif}
+  .modal.on{display:flex}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;width:min(560px,92vw);max-height:88vh;overflow:auto}
+  .card h3{margin:0;padding:18px 22px;border-bottom:1px solid var(--line);font-family:Georgia,serif;font-size:16px;line-height:1.4}
+  .card .body{padding:18px 22px}
+  .drop{border:2px dashed var(--line);border-radius:10px;padding:30px;text-align:center;color:var(--muted);cursor:pointer;transition:.15s}
+  .drop:hover,.drop.drag{border-color:var(--accent);background:#2a2410;color:var(--ink)}
+  .logitem{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .logitem a{color:var(--accent);text-decoration:none;word-break:break-all}
+  .row{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+  .close{float:right;cursor:pointer;color:var(--muted);font-size:20px;line-height:1}
+  .toast{position:fixed;bottom:24px;right:24px;background:var(--panel2);border:1px solid var(--accent);padding:12px 18px;border-radius:10px;font-family:Arial,sans-serif;font-size:13px;display:none;z-index:60;max-width:340px}
+  #authScreen{display:none;min-height:100vh;align-items:center;justify-content:center;font-family:Arial,sans-serif;padding:20px}
+  .authbox{background:var(--panel);border:1px solid var(--line);border-radius:16px;width:min(400px,94vw);padding:34px}
+  .authbox h2{margin:0 0 4px;font-family:Georgia,serif}
+  .authbox p{color:var(--muted);font-size:13px;margin:0 0 22px}
+  .authbox button.primary{width:100%;margin-top:10px;padding:11px}
+  .msg{font-size:13px;margin-top:12px;padding:10px;border-radius:8px;display:none}
+  .msg.err{background:#3a1f24;color:#e06464;display:block}
+  .msg.ok{background:#13351f;color:#4fd17e;display:block}
+  #app{display:none}
+  .pill{font-size:12px;color:var(--muted);font-family:Arial,sans-serif}
+  .resumo{font-family:Arial,sans-serif;font-size:13px;color:var(--muted);margin-top:10px}
+  .resumo b{color:var(--ink)}
+</style>
+</head>
+<body>
+
+<!-- TELA DE LOGIN (reserva — normalmente entra via app já logado) -->
+<div id="authScreen">
+  <div class="authbox">
+    <h2>Solicitações RMA</h2>
+    <p>Grupo Garcia — acesso restrito</p>
+    <div id="authMsgWrap"><div class="msg ok" style="display:block">Para ver as solicitações, entre primeiro no aplicativo Garcia Agro.</div></div>
+    <button class="primary" onclick="(window.top||window).location.reload()">Voltar ao app</button>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+<header>
+  <h1>Lista de Solicitações — RMA</h1>
+  <div class="sub">Grupo Garcia — Recuperação Judicial · documentos mensais ao Administrador Judicial</div>
+  <div class="bar">
+    <label style="color:var(--muted);font-size:13px">Período:</label>
+    <select id="anoSel" disabled><option>abr/25 – dez/26</option></select>
+    <button onclick="exportCSV()">Exportar status (CSV)</button>
+    <button onclick="openDownload()">Baixar arquivos do mês</button>
+    <div class="legend">
+      <span><span class="dot ok"></span>Encaminhado</span>
+      <span><span class="dot pen"></span>Pendente</span>
+      <span class="pill" id="whoami"></span>
+    </div>
+  </div>
+  <div class="pessoas" id="pessoas"></div>
+  <div class="resumo" id="resumo"></div>
+</header>
+<div class="wrap"><table id="grid"></table></div>
+</div>
+
+<!-- MODAL CÉLULA -->
+<div class="modal" id="modal">
+  <div class="card">
+    <h3><span class="close" onclick="closeModal()">×</span><span id="m_title"></span></h3>
+    <div class="body">
+      <div class="drop" id="drop">
+        Arraste o arquivo aqui (Excel, PDF…)<br><small>ou clique para selecionar</small>
+        <input type="file" id="fileInput" style="display:none">
+      </div>
+      <h4 style="margin:20px 0 6px">Arquivos enviados</h4>
+      <div id="logList"><div style="color:var(--muted);font-size:13px">Nenhum arquivo ainda.</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DOWNLOAD -->
+<div class="modal" id="downloadModal">
+  <div class="card">
+    <h3><span class="close" onclick="closeDownload()">×</span>Baixar arquivos do mês</h3>
+    <div class="body">
+      <p style="color:var(--muted);font-size:13px;margin-top:0">Junta todos os arquivos enviados da pessoa selecionada naquele mês num único ZIP.</p>
+      <label style="font-size:13px;color:var(--muted)">Mês/Ano</label>
+      <select id="dlMes" style="width:100%;margin:8px 0 16px"></select>
+      <button class="primary" id="dlBtn" onclick="baixarMes()" style="width:100%;padding:11px">Gerar e baixar ZIP</button>
+      <div class="msg" id="dlMsg" style="margin-top:14px"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const SUPABASE_URL = "https://rgvqzxbprnxffjkgmman.supabase.co";
+const SUPABASE_KEY = "sb_publishable_YzL3o_4epetSEsJxgIYRgQ_qsw8piEB";
+const ADMIN_EMAIL  = "adm@maximagestao.com";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const PESSOAS = [
+  "Cairo Garcia Pereira",
+  "Suely Arantes Araujo Pereira",
+  "Alice Lacerda Silva",
+  "Thiago A. Pereira Garcia"
+];
+
+const DOCS = [
+  "Balancete contábil analítico - até o último nível de detalhamento do plano de contas com saldo diferente de zero (formato excel e pdf);",
+  "Razão geral de contas (formato excel e pdf);",
+  "Relatório de folha de pagamento, com o resumo das bases;",
+  "Comprovante de pagamento dos tributos e encargos trabalhistas;",
+  "Relatórios SEFIP´s e protocolo de envio;",
+  "Cópia dos extratos Bancários;",
+  "Relatório de contas a receber (formato excel e pdf);",
+  "Relatório de contas a pagar (formato excel e pdf);",
+  "Relatório de adiantamento de clientes (formato excel e pdf);",
+  "Relatório de adiantamento a fornecedores (formato excel e pdf);",
+  "Composição dos estoques (formato excel e pdf);",
+  "Composição do imobilizado (formato excel e pdf);",
+  "Relatório de investimentos (formato excel e pdf);",
+  "Relatório de faturamento (formato excel e pdf);",
+  "Demonstração do fluxo de caixa (formato excel e pdf);",
+  "Contratos com partes relacionadas;",
+  "Contratos envolvendo coobrigados.",
+  "Informações sobre os principais atos realizados",
+  "Relatório de Notas Fiscais de Entrada e Saída"
+];
+
+// período abr/2025 até dez/2026
+const MESES_SEQ = [];
+(function(){
+  const nomes=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+  for(let ano=2025;ano<=2026;ano++){
+    const ini = ano===2025?3:0;
+    for(let m=ini;m<=11;m++) MESES_SEQ.push({nome:nomes[m], ano});
+  }
+})();
+
+let atual=null, statusCache={}, sessionUser=null, isAdmin=false, pessoaSel=0;
+
+const EMBUTIDO = new URLSearchParams(location.search).get("app")==="1" || window.self!==window.top;
+function ckey(p,d,ms){return `${p}__${d}__${ms.nome}__${ms.ano}`;}
+
+async function logout(){await sb.auth.signOut();location.reload();}
+
+async function checkSession(){
+  try{
+    const {data:{session}}=await sb.auth.getSession();
+    if(!session){showAuth();return;}
+    sessionUser=session.user;
+    isAdmin = sessionUser.email===ADMIN_EMAIL;
+    const {data:perfil}=await sb.from("perfis").select("status").eq("id",sessionUser.id).maybeSingle();
+    const status = perfil?perfil.status:"pendente";
+    if(!isAdmin && status!=="aprovado"){ showAuth(); return; }
+    showApp();
+  }catch(e){ showAuth(); }
+}
+function showAuth(){authScreen.style.display="flex";app.style.display="none";}
+function showApp(){
+  authScreen.style.display="none";app.style.display="block";
+  whoami.textContent=sessionUser.email;
+  montarPessoas();
+  render();
+}
+
+function montarPessoas(){
+  document.getElementById("pessoas").innerHTML = PESSOAS.map((p,i)=>
+    `<button class="${i===pessoaSel?'active':''}" onclick="selPessoa(${i})">${p}</button>`
+  ).join("");
+}
+function selPessoa(i){ pessoaSel=i; montarPessoas(); render(); }
+
+async function loadStatus(){
+  statusCache={};
+  try{
+    const {data,error}=await sb.from("rma").select("*");
+    if(error)throw error;
+    (data||[]).forEach(r=>{statusCache[r.cell_key]={path:r.file_path,filename:r.filename,by:r.enviado_por,at:r.created_at};});
+  }catch(e){toast("Erro ao carregar: "+e.message);console.error(e);}
+}
+
+async function render(){
+  await loadStatus();
+  let html=`<thead><tr><th class="doccol">Documento solicitado</th>`;
+  MESES_SEQ.forEach(ms=>html+=`<th>${ms.nome}/${String(ms.ano).slice(2)}</th>`);
+  html+=`</tr></thead><tbody>`;
+  let enc=0, tot=0;
+  DOCS.forEach((doc,d)=>{
+    html+=`<tr><td class="doc"><span class="n">${d+1}-</span>${doc}</td>`;
+    MESES_SEQ.forEach(ms=>{
+      const k=ckey(pessoaSel,d,ms), s=statusCache[k];
+      tot++; if(s)enc++;
+      html+= s
+        ? `<td class="cell ok" data-k="${k}" data-d="${d}" data-mn="${ms.nome}" data-ma="${ms.ano}"><span class="badge ok">✓</span><span class="fname">${s.filename||""}</span></td>`
+        : `<td class="cell" data-k="${k}" data-d="${d}" data-mn="${ms.nome}" data-ma="${ms.ano}"><span class="badge pen">—</span></td>`;
+    });
+    html+=`</tr>`;
+  });
+  html+=`</tbody>`;
+  grid.innerHTML=html;
+  document.getElementById("resumo").innerHTML = `<b>${PESSOAS[pessoaSel]}</b> — ${enc} de ${tot} encaminhados (${tot?Math.round(enc/tot*100):0}%)`;
+  bindCells();
+}
+function bindCells(){
+  document.querySelectorAll("td.cell").forEach(td=>{
+    td.onclick=()=>openCell(td);
+    td.ondragover=e=>{e.preventDefault();td.classList.add("drag");};
+    td.ondragleave=()=>td.classList.remove("drag");
+    td.ondrop=e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f){openCell(td);upload(f);}};
+  });
+}
+function openCell(td){
+  const d=+td.dataset.d, nome=td.dataset.mn, ano=+td.dataset.ma;
+  atual={key:td.dataset.k, docIdx:d, mes:nome, ano};
+  m_title.textContent=`${d+1}- ${DOCS[d].slice(0,70)}${DOCS[d].length>70?'…':''} — ${nome}/${String(ano).slice(2)}`;
+  renderLog();modal.classList.add("on");
+}
+function closeModal(){modal.classList.remove("on");}
+
+async function renderLog(){
+  const s=statusCache[atual.key];
+  if(s){
+    const {data}=await sb.storage.from("rma").createSignedUrl(s.path,3600);
+    const url=data?data.signedUrl:"#";
+    logList.innerHTML=`<div class="logitem"><span>📄 <a href="${url}" target="_blank">${s.filename}</a></span><span style="color:var(--muted)">${new Date(s.at).toLocaleString('pt-BR')}<br>${s.by||""}</span></div><div class="row"><button onclick="removerArquivo()" style="border-color:#7a3a3a;color:#e06464">Remover este arquivo</button></div>`;
+  }else{
+    logList.innerHTML=`<div style="color:var(--muted);font-size:13px">Nenhum arquivo ainda.</div>`;
+  }
+}
+
+drop.onclick=()=>fileInput.click();
+fileInput.onchange=e=>{if(e.target.files[0])upload(e.target.files[0]);};
+drop.ondragover=e=>{e.preventDefault();drop.classList.add("drag");};
+drop.ondragleave=()=>drop.classList.remove("drag");
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove("drag");if(e.dataTransfer.files[0])upload(e.dataTransfer.files[0]);};
+
+async function upload(file){
+  const ext = (file.name.split(".").pop()||"dat").toLowerCase();
+  const safe=`${pessoaSel}/${atual.ano}/${atual.docIdx}_${atual.mes}_${Date.now()}.${ext}`;
+  toast("Enviando...");
+  try{
+    const {error:upErr}=await sb.storage.from("rma").upload(safe,file,{upsert:true});
+    if(upErr)throw upErr;
+    const {error:dbErr}=await sb.from("rma").upsert({
+      cell_key:atual.key, pessoa_idx:pessoaSel, pessoa:PESSOAS[pessoaSel],
+      doc_idx:atual.docIdx, documento:DOCS[atual.docIdx], mes:atual.mes, ano:atual.ano,
+      filename:file.name, file_path:safe, enviado_por:sessionUser.email
+    },{onConflict:"cell_key"});
+    if(dbErr)throw dbErr;
+    toast("Arquivo salvo ✓");
+    statusCache[atual.key]={path:safe,filename:file.name,by:sessionUser.email,at:new Date().toISOString()};
+    await render();renderLog();
+  }catch(e){toast("Erro no envio: "+e.message);console.error(e);}
+}
+async function removerArquivo(){
+  if(!confirm("Remover o arquivo deste documento/mês?"))return;
+  try{
+    const s=statusCache[atual.key];
+    if(s)await sb.storage.from("rma").remove([s.path]);
+    await sb.from("rma").delete().eq("cell_key",atual.key);
+    toast("Removido.");closeModal();await render();
+  }catch(e){toast("Erro ao remover.");console.error(e);}
+}
+
+function exportCSV(){
+  let csv="Documento;"+MESES_SEQ.map(ms=>ms.nome+"/"+String(ms.ano).slice(2)).join(";")+"\n";
+  DOCS.forEach((doc,d)=>{
+    let row=[`${d+1}- ${doc.replace(/;/g,",")}`];
+    MESES_SEQ.forEach(ms=>row.push(statusCache[ckey(pessoaSel,d,ms)]?"Encaminhado":"Pendente"));
+    csv+=row.join(";")+"\n";
+  });
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`rma_${PESSOAS[pessoaSel].replace(/ /g,"_")}.csv`;a.click();
+}
+
+let toastT;
+function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.style.display="block";clearTimeout(toastT);toastT=setTimeout(()=>t.style.display="none",4000);}
+
+function openDownload(){
+  dlMes.innerHTML="";
+  MESES_SEQ.forEach((ms,idx)=>{ dlMes.innerHTML+=`<option value="${idx}">${ms.nome}/${String(ms.ano).slice(2)}</option>`; });
+  dlMsg.className="msg";
+  downloadModal.classList.add("on");
+}
+function closeDownload(){downloadModal.classList.remove("on");}
+
+async function baixarMes(){
+  const ms = MESES_SEQ[+dlMes.value];
+  dlBtn.disabled=true;
+  dlMsg.className="msg ok"; dlMsg.textContent="Procurando arquivos do período...";
+  try{
+    const arquivos=[];
+    for(let d=0;d<DOCS.length;d++){
+      const s = statusCache[ckey(pessoaSel,d,ms)];
+      if(s && s.path){
+        const ext = (s.filename.split(".").pop()||"dat");
+        const nome = `${d+1}_${DOCS[d].slice(0,40).replace(/[\/\\:*?"<>|;]/g,"-").trim()}.${ext}`;
+        arquivos.push({path:s.path, nome});
+      }
+    }
+    if(arquivos.length===0){ dlMsg.className="msg err"; dlMsg.textContent="Nenhum arquivo enviado neste mês ainda."; dlBtn.disabled=false; return; }
+    dlMsg.className="msg ok"; dlMsg.textContent=`Baixando ${arquivos.length} arquivo(s) e montando o ZIP...`;
+    const zip = new JSZip();
+    for(const arq of arquivos){
+      const {data,error}=await sb.storage.from("rma").download(arq.path);
+      if(error) throw error;
+      zip.file(arq.nome, data);
+    }
+    const blob = await zip.generateAsync({type:"blob"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download=`RMA_${PESSOAS[pessoaSel].replace(/ /g,"_")}_${ms.nome}_${ms.ano}.zip`;
+    a.click();
+    dlMsg.className="msg ok"; dlMsg.textContent=`Pronto! ZIP com ${arquivos.length} arquivo(s) baixado.`;
+  }catch(e){ dlMsg.className="msg err"; dlMsg.textContent="Erro ao gerar o ZIP: "+e.message; console.error(e); }
+  dlBtn.disabled=false;
+}
+
+checkSession();
+</script>
+</body>
+</html>
