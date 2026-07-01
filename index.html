@@ -175,10 +175,14 @@ const DOCS = [
 
 // índice do documento "Cópia dos extratos Bancários" (linha 6 => idx 5)
 const DOC_EXTRATOS_IDX = 5;
+// linhas de contratos: 16 (idx 15) e 17 (idx 16) ficam verdes se houver contrato no mês
+const DOCS_CONTRATOS_IDX = [15, 16];
 // quantas contas o módulo Extratos tem (mês completo = todas preenchidas)
 const TOTAL_CONTAS_EXTRATOS = 10;
 // URL do módulo de extratos (para o link ao clicar)
 const URL_EXTRATOS = "https://leniohp.github.io/extratos-garcia/";
+// URL do módulo de contratos (para o link ao clicar)
+const URL_CONTRATOS = "https://leniohp.github.io/contratos-garcia/";
 
 // período abr/2025 até dez/2026
 const MESES_SEQ = [];
@@ -192,6 +196,7 @@ const MESES_SEQ = [];
 
 let atual=null, statusCache={}, sessionUser=null, isAdmin=false, pessoaSel=0;
 let extratosCompletos={}; // { "abr-2025": true, ... }
+let mesesComContrato={}; // { "abr-2025": true, ... }
 
 const EMBUTIDO = new URLSearchParams(location.search).get("app")==="1" || window.self!==window.top;
 function ckey(p,d,ms){return `${p}__${d}__${ms.nome}__${ms.ano}`;}
@@ -260,9 +265,30 @@ async function loadExtratosCompletos(){
   }catch(e){console.error("Erro ao verificar extratos:",e);}
 }
 
+// consulta a tabela CONTRATOS e marca os meses que têm ao menos 1 contrato
+const NOMES_MES=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+async function loadMesesComContrato(){
+  mesesComContrato={};
+  try{
+    const {data,error}=await sb.from("contratos").select("data");
+    if(error)throw error;
+    (data||[]).forEach(r=>{
+      if(!r.data)return;
+      // data no formato AAAA-MM-DD
+      const p=(""+r.data).split("-");
+      if(p.length<2)return;
+      const ano=p[0], mm=parseInt(p[1],10);
+      if(!mm||mm<1||mm>12)return;
+      const chave=`${NOMES_MES[mm-1]}-${ano}`;
+      mesesComContrato[chave]=true;
+    });
+  }catch(e){console.error("Erro ao verificar contratos:",e);}
+}
+
 async function render(){
   await loadStatus();
   await loadExtratosCompletos();
+  await loadMesesComContrato();
   let html=`<thead><tr><th class="doccol">Documento solicitado</th>`;
   MESES_SEQ.forEach(ms=>html+=`<th>${ms.nome}/${String(ms.ano).slice(2)}</th>`);
   html+=`</tr></thead><tbody>`;
@@ -276,6 +302,9 @@ async function render(){
       if(d===DOC_EXTRATOS_IDX && !s && extratosCompletos[mcol(ms)]){
         enc++; // conta como encaminhado no resumo
         html+= `<td class="cell auto" data-mescol="${mcol(ms)}" data-mn="${ms.nome}" data-ma="${ms.ano}" onclick="irParaExtratos('${mcol(ms)}')" title="Todos os extratos deste mês foram enviados. Clique para ver no módulo Extratos."><span class="badge auto">✓</span><span class="autolabel">extratos</span></td>`;
+      }else if(DOCS_CONTRATOS_IDX.includes(d) && !s && mesesComContrato[mcol(ms)]){
+        enc++; // conta como encaminhado no resumo
+        html+= `<td class="cell auto" data-mescol="${mcol(ms)}" data-mn="${ms.nome}" data-ma="${ms.ano}" onclick="irParaContratos('${mcol(ms)}')" title="Há contrato(s) cadastrado(s) neste mês. Clique para ver no módulo Contratos."><span class="badge auto">✓</span><span class="autolabel">contratos</span></td>`;
       }else if(s){
         html+= `<td class="cell ok" data-k="${k}" data-d="${d}" data-mn="${ms.nome}" data-ma="${ms.ano}"><span class="badge ok">✓</span><span class="fname">${s.filename||""}</span></td>`;
       }else{
@@ -295,6 +324,15 @@ function irParaExtratos(mescol){
   const url = URL_EXTRATOS + "?app=1&mes=" + encodeURIComponent(mescol);
   if(window.top && window.top!==window.self){
     // dentro do app Garcia: navega o topo para o extratos
+    try{ window.top.location.href = url; return; }catch(e){}
+  }
+  window.open(url,"_blank");
+}
+
+// abre o módulo de Contratos filtrado pelo mês clicado
+function irParaContratos(mescol){
+  const url = URL_CONTRATOS + "?app=1&mes=" + encodeURIComponent(mescol);
+  if(window.top && window.top!==window.self){
     try{ window.top.location.href = url; return; }catch(e){}
   }
   window.open(url,"_blank");
@@ -371,6 +409,7 @@ function exportCSV(){
       let val="Pendente";
       if(statusCache[ckey(pessoaSel,d,ms)])val="Encaminhado";
       else if(d===DOC_EXTRATOS_IDX && extratosCompletos[mcol(ms)])val="Encaminhado (extratos)";
+      else if(DOCS_CONTRATOS_IDX.includes(d) && mesesComContrato[mcol(ms)])val="Encaminhado (contratos)";
       row.push(val);
     });
     csv+=row.join(";")+"\n";
