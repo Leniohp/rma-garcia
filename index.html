@@ -22,9 +22,10 @@
   select,button,input{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 14px;font-size:14px;font-family:Arial,sans-serif}
   button{cursor:pointer}
   button.primary{background:var(--accent);color:#1a1206;border:none;font-weight:bold}
-  .legend{display:flex;gap:16px;color:var(--muted);font-size:13px;margin-left:auto;align-items:center}
+  .legend{display:flex;gap:16px;color:var(--muted);font-size:13px;margin-left:auto;align-items:center;flex-wrap:wrap}
   .dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
   .dot.ok{background:var(--ok)} .dot.pen{background:var(--pending-ink)}
+  .dot.auto{background:#2f7fc4}
   .pessoas{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;font-family:Arial,sans-serif}
   .pessoas button{background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:20px;padding:8px 16px;font-size:13px}
   .pessoas button.active{background:var(--accent);color:#1a1206;border-color:var(--accent);font-weight:bold}
@@ -38,10 +39,13 @@
   td.cell{width:60px;height:50px;cursor:pointer;position:relative;transition:.15s;border-left:1px solid var(--line)}
   td.cell:hover{outline:2px solid var(--accent);outline-offset:-2px}
   td.cell.ok{background:var(--ok-bg)}
+  td.cell.auto{background:var(--ok-bg)}
+  td.cell.auto .badge.auto{color:#4fd17e}
   .badge{font-size:11px;font-weight:bold}
   .badge.ok{color:#4fd17e}
   .badge.pen{color:var(--pending-ink)}
   .fname{display:block;font-size:8.5px;color:var(--muted);max-width:54px;margin:2px auto 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .autolabel{display:block;font-size:8px;color:#5fb3f0;margin-top:1px}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50;font-family:Arial,sans-serif}
   .modal.on{display:flex}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;width:min(560px,92vw);max-height:88vh;overflow:auto}
@@ -92,6 +96,7 @@
     <button onclick="openDownload()">Baixar arquivos do mês</button>
     <div class="legend">
       <span><span class="dot ok"></span>Encaminhado</span>
+      <span><span class="dot auto"></span>Extratos completos (automático)</span>
       <span><span class="dot pen"></span>Pendente</span>
       <span class="pill" id="whoami"></span>
     </div>
@@ -168,6 +173,13 @@ const DOCS = [
   "Relatório de Notas Fiscais de Entrada e Saída"
 ];
 
+// índice do documento "Cópia dos extratos Bancários" (linha 6 => idx 5)
+const DOC_EXTRATOS_IDX = 5;
+// quantas contas o módulo Extratos tem (mês completo = todas preenchidas)
+const TOTAL_CONTAS_EXTRATOS = 10;
+// URL do módulo de extratos (para o link ao clicar)
+const URL_EXTRATOS = "https://leniohp.github.io/extratos-garcia/";
+
 // período abr/2025 até dez/2026
 const MESES_SEQ = [];
 (function(){
@@ -179,9 +191,11 @@ const MESES_SEQ = [];
 })();
 
 let atual=null, statusCache={}, sessionUser=null, isAdmin=false, pessoaSel=0;
+let extratosCompletos={}; // { "abr-2025": true, ... }
 
 const EMBUTIDO = new URLSearchParams(location.search).get("app")==="1" || window.self!==window.top;
 function ckey(p,d,ms){return `${p}__${d}__${ms.nome}__${ms.ano}`;}
+function mcol(ms){return `${ms.nome}-${ms.ano}`;}
 
 async function logout(){await sb.auth.signOut();location.reload();}
 
@@ -221,8 +235,34 @@ async function loadStatus(){
   }catch(e){toast("Erro ao carregar: "+e.message);console.error(e);}
 }
 
+// consulta a tabela de EXTRATOS e calcula quais meses estão completos (todas as contas preenchidas)
+async function loadExtratosCompletos(){
+  extratosCompletos={};
+  try{
+    const {data,error}=await sb.from("extratos").select("cell_key,mes,ano");
+    if(error)throw error;
+    // conta quantas contas existem por mês-ano
+    const contagem={}; // { "abr-2025": Set(contaIdx) }
+    (data||[]).forEach(r=>{
+      // cell_key formato: contaIdx__mes__ano  (ex: 0__abr__2025)
+      let contaIdx=null, mes=r.mes, ano=r.ano;
+      if(r.cell_key && r.cell_key.indexOf("__")>-1){
+        const p=r.cell_key.split("__");
+        contaIdx=p[0]; if(!mes)mes=p[1]; if(!ano)ano=p[2];
+      }
+      const chave=`${mes}-${ano}`;
+      if(!contagem[chave])contagem[chave]=new Set();
+      if(contaIdx!==null)contagem[chave].add(contaIdx);
+    });
+    Object.keys(contagem).forEach(chave=>{
+      if(contagem[chave].size>=TOTAL_CONTAS_EXTRATOS)extratosCompletos[chave]=true;
+    });
+  }catch(e){console.error("Erro ao verificar extratos:",e);}
+}
+
 async function render(){
   await loadStatus();
+  await loadExtratosCompletos();
   let html=`<thead><tr><th class="doccol">Documento solicitado</th>`;
   MESES_SEQ.forEach(ms=>html+=`<th>${ms.nome}/${String(ms.ano).slice(2)}</th>`);
   html+=`</tr></thead><tbody>`;
@@ -232,9 +272,15 @@ async function render(){
     MESES_SEQ.forEach(ms=>{
       const k=ckey(pessoaSel,d,ms), s=statusCache[k];
       tot++; if(s)enc++;
-      html+= s
-        ? `<td class="cell ok" data-k="${k}" data-d="${d}" data-mn="${ms.nome}" data-ma="${ms.ano}"><span class="badge ok">✓</span><span class="fname">${s.filename||""}</span></td>`
-        : `<td class="cell" data-k="${k}" data-d="${d}" data-mn="${ms.nome}" data-ma="${ms.ano}"><span class="badge pen">—</span></td>`;
+      // linha dos extratos: pinta verde automático se o mês estiver completo no módulo Extratos
+      if(d===DOC_EXTRATOS_IDX && !s && extratosCompletos[mcol(ms)]){
+        enc++; // conta como encaminhado no resumo
+        html+= `<td class="cell auto" data-mescol="${mcol(ms)}" data-mn="${ms.nome}" data-ma="${ms.ano}" onclick="irParaExtratos('${mcol(ms)}')" title="Todos os extratos deste mês foram enviados. Clique para ver no módulo Extratos."><span class="badge auto">✓</span><span class="autolabel">extratos</span></td>`;
+      }else if(s){
+        html+= `<td class="cell ok" data-k="${k}" data-d="${d}" data-mn="${ms.nome}" data-ma="${ms.ano}"><span class="badge ok">✓</span><span class="fname">${s.filename||""}</span></td>`;
+      }else{
+        html+= `<td class="cell" data-k="${k}" data-d="${d}" data-mn="${ms.nome}" data-ma="${ms.ano}"><span class="badge pen">—</span></td>`;
+      }
     });
     html+=`</tr>`;
   });
@@ -243,8 +289,21 @@ async function render(){
   document.getElementById("resumo").innerHTML = `<b>${PESSOAS[pessoaSel]}</b> — ${enc} de ${tot} encaminhados (${tot?Math.round(enc/tot*100):0}%)`;
   bindCells();
 }
+
+// abre o módulo de Extratos já no mês clicado (destaca a coluna)
+function irParaExtratos(mescol){
+  const url = URL_EXTRATOS + "?app=1&mes=" + encodeURIComponent(mescol);
+  if(window.top && window.top!==window.self){
+    // dentro do app Garcia: navega o topo para o extratos
+    try{ window.top.location.href = url; return; }catch(e){}
+  }
+  window.open(url,"_blank");
+}
+
 function bindCells(){
   document.querySelectorAll("td.cell").forEach(td=>{
+    // células "auto" (extratos) já têm onclick próprio; não sobrescrever
+    if(td.classList.contains("auto"))return;
     td.onclick=()=>openCell(td);
     td.ondragover=e=>{e.preventDefault();td.classList.add("drag");};
     td.ondragleave=()=>td.classList.remove("drag");
@@ -308,7 +367,12 @@ function exportCSV(){
   let csv="Documento;"+MESES_SEQ.map(ms=>ms.nome+"/"+String(ms.ano).slice(2)).join(";")+"\n";
   DOCS.forEach((doc,d)=>{
     let row=[`${d+1}- ${doc.replace(/;/g,",")}`];
-    MESES_SEQ.forEach(ms=>row.push(statusCache[ckey(pessoaSel,d,ms)]?"Encaminhado":"Pendente"));
+    MESES_SEQ.forEach(ms=>{
+      let val="Pendente";
+      if(statusCache[ckey(pessoaSel,d,ms)])val="Encaminhado";
+      else if(d===DOC_EXTRATOS_IDX && extratosCompletos[mcol(ms)])val="Encaminhado (extratos)";
+      row.push(val);
+    });
     csv+=row.join(";")+"\n";
   });
   const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
