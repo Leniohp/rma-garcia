@@ -70,6 +70,22 @@
   .pill{font-size:12px;color:var(--muted);font-family:Arial,sans-serif}
   .resumo{font-family:Arial,sans-serif;font-size:13px;color:var(--muted);margin-top:10px}
   .resumo b{color:var(--ink)}
+  .logitem .verbtn{border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:7px;padding:5px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-size:12px;margin-left:8px}
+  .logitem .verbtn:hover{border-color:var(--accent)}
+  .logitem .verbtn svg{width:14px;height:14px}
+  .pvcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;width:min(560px,92vw);height:min(80vh,720px);display:flex;flex-direction:column;overflow:hidden}
+  .pvhead{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .pvhead .tt{min-width:0}
+  .pvhead .tt .t1{font-family:Georgia,serif;font-size:15px}
+  .pvhead .tt .t2{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pvbtns{display:flex;gap:6px;flex-shrink:0}
+  .pvbtns button{border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:7px;padding:7px 9px;cursor:pointer}
+  .pvbtns button:hover{border-color:var(--accent)}
+  .pvbtns button svg{width:16px;height:16px;display:block}
+  .pvbody{flex:1;background:#0b0f14;overflow:auto;display:flex;align-items:center;justify-content:center}
+  .pvbody iframe{width:100%;height:100%;border:0;background:#fff}
+  .pvbody img{max-width:100%;max-height:100%;display:block}
+  .pvmsg{color:var(--muted);font-size:13px;text-align:center;padding:40px 24px;font-family:Arial,sans-serif;line-height:1.6}
 </style>
 </head>
 <body>
@@ -119,6 +135,24 @@
       <h4 style="margin:20px 0 6px">Arquivos enviados</h4>
       <div id="logList"><div style="color:var(--muted);font-size:13px">Nenhum arquivo ainda.</div></div>
     </div>
+  </div>
+</div>
+
+<!-- MODAL PREVIEW ARQUIVO -->
+<div class="modal" id="pvModal">
+  <div class="pvcard">
+    <div class="pvhead">
+      <div class="tt">
+        <div class="t1">Visualizar arquivo</div>
+        <div class="t2" id="pvNome">—</div>
+      </div>
+      <div class="pvbtns">
+        <button onclick="pvNovaAba()" title="Abrir em nova aba" aria-label="Abrir em nova aba"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></button>
+        <button onclick="pvBaixar()" title="Baixar" aria-label="Baixar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></button>
+        <button onclick="fecharPreview()" title="Fechar" aria-label="Fechar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>
+    </div>
+    <div class="pvbody" id="pvBody"></div>
   </div>
 </div>
 
@@ -371,11 +405,41 @@ async function renderLog(){
   if(s){
     const {data}=await sb.storage.from("rma").createSignedUrl(s.path,3600);
     const url=data?data.signedUrl:"#";
-    logList.innerHTML=`<div class="logitem"><span>📄 <a href="${url}" target="_blank">${s.filename}</a></span><span style="color:var(--muted)">${new Date(s.at).toLocaleString('pt-BR')}<br>${s.by||""}</span></div><div class="row"><button onclick="removerArquivo()" style="border-color:#7a3a3a;color:#e06464">Remover este arquivo</button></div>`;
+    logList.innerHTML=`<div class="logitem"><span>📄 <a href="${url}" target="_blank">${s.filename}</a> <button class="verbtn" onclick="verArquivo()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>Visualizar</button></span><span style="color:var(--muted)">${new Date(s.at).toLocaleString('pt-BR')}<br>${s.by||""}</span></div><div class="row"><button onclick="removerArquivo()" style="border-color:#7a3a3a;color:#e06464">Remover este arquivo</button></div>`;
   }else{
     logList.innerHTML=`<div style="color:var(--muted);font-size:13px">Nenhum arquivo ainda.</div>`;
   }
 }
+
+let pvUrl=null;
+async function verArquivo(){
+  const s=statusCache[atual.key];
+  if(!s||!s.path)return;
+  const nome=s.filename||"arquivo";
+  document.getElementById("pvNome").textContent=nome;
+  const body=document.getElementById("pvBody");
+  body.innerHTML=`<div class="pvmsg">Carregando…</div>`;
+  pvModal.classList.add("on");
+  try{
+    const {data,error}=await sb.storage.from("rma").createSignedUrl(s.path,3600);
+    if(error)throw error;
+    pvUrl=data.signedUrl;
+    const ext=(nome.split(".").pop()||"").toLowerCase();
+    if(ext==="pdf"){
+      body.innerHTML=`<iframe src="${pvUrl}#toolbar=1&navpanes=0" title="Arquivo"></iframe>`;
+    }else if(["jpg","jpeg","png","gif","webp","bmp"].includes(ext)){
+      body.innerHTML=`<img src="${pvUrl}" alt="Arquivo">`;
+    }else{
+      body.innerHTML=`<div class="pvmsg">Este tipo de arquivo (.${ext}) não pode ser exibido em miniatura aqui.<br>Use o botão de baixar ou abrir em nova aba para visualizá-lo.</div>`;
+    }
+  }catch(e){
+    body.innerHTML=`<div class="pvmsg">Não foi possível carregar o arquivo.</div>`;
+    console.error(e);
+  }
+}
+function fecharPreview(){pvModal.classList.remove("on");document.getElementById("pvBody").innerHTML="";pvUrl=null;}
+function pvNovaAba(){if(pvUrl)window.open(pvUrl,"_blank");}
+function pvBaixar(){if(pvUrl)window.open(pvUrl,"_blank");}
 
 drop.onclick=()=>fileInput.click();
 fileInput.onchange=e=>{if(e.target.files[0])upload(e.target.files[0]);};
@@ -470,6 +534,8 @@ async function baixarMes(){
   }catch(e){ dlMsg.className="msg err"; dlMsg.textContent="Erro ao gerar o ZIP: "+e.message; console.error(e); }
   dlBtn.disabled=false;
 }
+
+document.getElementById("pvModal").addEventListener("click",e=>{if(e.target.id==="pvModal")fecharPreview();});
 
 checkSession();
 </script>
