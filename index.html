@@ -177,8 +177,14 @@ const DOCS = [
 const DOC_EXTRATOS_IDX = 5;
 // linhas de contratos: 16 (idx 15) e 17 (idx 16) ficam verdes se houver contrato no mês
 const DOCS_CONTRATOS_IDX = [15, 16];
-// quantas contas o módulo Extratos tem (mês completo = todas preenchidas)
-const TOTAL_CONTAS_EXTRATOS = 10;
+// quais contas do módulo Extratos pertencem a cada pessoa do RMA (por índice de conta, começa em 0)
+// pessoaSel: 0=Cairo, 1=Suely, 2=Alice, 3=Thiago
+const CONTAS_POR_PESSOA = {
+  0: [2, 3, 5],       // Cairo Garcia Pereira
+  1: [1, 6, 7, 8],    // Suely Arantes Araujo Pereira
+  2: [0, 4],          // Alice Lacerda Silva
+  3: [9]              // Thiago A. Pereira Garcia
+};
 // URL do módulo de extratos (para o link ao clicar)
 const URL_EXTRATOS = "https://leniohp.github.io/extratos-garcia/";
 // URL do módulo de contratos (para o link ao clicar)
@@ -195,7 +201,7 @@ const MESES_SEQ = [];
 })();
 
 let atual=null, statusCache={}, sessionUser=null, isAdmin=false, pessoaSel=0;
-let extratosCompletos={}; // { "abr-2025": true, ... }
+let contasPorMes={}; // { "abr-2025": Set("0","4",...) } — quais contas têm extrato em cada mês
 let mesesComContrato={}; // { "abr-2025": true, ... }
 
 const EMBUTIDO = new URLSearchParams(location.search).get("app")==="1" || window.self!==window.top;
@@ -240,14 +246,12 @@ async function loadStatus(){
   }catch(e){toast("Erro ao carregar: "+e.message);console.error(e);}
 }
 
-// consulta a tabela de EXTRATOS e calcula quais meses estão completos (todas as contas preenchidas)
-async function loadExtratosCompletos(){
-  extratosCompletos={};
+// consulta a tabela de EXTRATOS e guarda, por mês, quais contas têm extrato enviado
+async function loadContasPorMes(){
+  contasPorMes={};
   try{
     const {data,error}=await sb.from("extratos").select("cell_key,mes,ano");
     if(error)throw error;
-    // conta quantas contas existem por mês-ano
-    const contagem={}; // { "abr-2025": Set(contaIdx) }
     (data||[]).forEach(r=>{
       // cell_key formato: contaIdx__mes__ano  (ex: 0__abr__2025)
       let contaIdx=null, mes=r.mes, ano=r.ano;
@@ -255,14 +259,20 @@ async function loadExtratosCompletos(){
         const p=r.cell_key.split("__");
         contaIdx=p[0]; if(!mes)mes=p[1]; if(!ano)ano=p[2];
       }
+      if(contaIdx===null)return;
       const chave=`${mes}-${ano}`;
-      if(!contagem[chave])contagem[chave]=new Set();
-      if(contaIdx!==null)contagem[chave].add(contaIdx);
-    });
-    Object.keys(contagem).forEach(chave=>{
-      if(contagem[chave].size>=TOTAL_CONTAS_EXTRATOS)extratosCompletos[chave]=true;
+      if(!contasPorMes[chave])contasPorMes[chave]=new Set();
+      contasPorMes[chave].add(String(contaIdx));
     });
   }catch(e){console.error("Erro ao verificar extratos:",e);}
+}
+// verifica se, para a pessoa selecionada, TODAS as contas dela estão preenchidas no mês
+function extratosCompletosDaPessoa(mescol){
+  const contas = CONTAS_POR_PESSOA[pessoaSel] || [];
+  if(!contas.length) return false;
+  const preenchidas = contasPorMes[mescol];
+  if(!preenchidas) return false;
+  return contas.every(idx => preenchidas.has(String(idx)));
 }
 
 // consulta a tabela CONTRATOS e marca os meses que têm ao menos 1 contrato
@@ -287,7 +297,7 @@ async function loadMesesComContrato(){
 
 async function render(){
   await loadStatus();
-  await loadExtratosCompletos();
+  await loadContasPorMes();
   await loadMesesComContrato();
   let html=`<thead><tr><th class="doccol">Documento solicitado</th>`;
   MESES_SEQ.forEach(ms=>html+=`<th>${ms.nome}/${String(ms.ano).slice(2)}</th>`);
@@ -298,8 +308,8 @@ async function render(){
     MESES_SEQ.forEach(ms=>{
       const k=ckey(pessoaSel,d,ms), s=statusCache[k];
       tot++; if(s)enc++;
-      // linha dos extratos: pinta verde automático se o mês estiver completo no módulo Extratos
-      if(d===DOC_EXTRATOS_IDX && !s && extratosCompletos[mcol(ms)]){
+      // linha dos extratos: pinta verde automático se TODAS as contas DA PESSOA estiverem no mês
+      if(d===DOC_EXTRATOS_IDX && !s && extratosCompletosDaPessoa(mcol(ms))){
         enc++; // conta como encaminhado no resumo
         html+= `<td class="cell auto" data-mescol="${mcol(ms)}" data-mn="${ms.nome}" data-ma="${ms.ano}" onclick="irParaExtratos('${mcol(ms)}')" title="Todos os extratos deste mês foram enviados. Clique para ver no módulo Extratos."><span class="badge auto">✓</span><span class="autolabel">extratos</span></td>`;
       }else if(DOCS_CONTRATOS_IDX.includes(d) && !s && mesesComContrato[mcol(ms)]){
@@ -408,7 +418,7 @@ function exportCSV(){
     MESES_SEQ.forEach(ms=>{
       let val="Pendente";
       if(statusCache[ckey(pessoaSel,d,ms)])val="Encaminhado";
-      else if(d===DOC_EXTRATOS_IDX && extratosCompletos[mcol(ms)])val="Encaminhado (extratos)";
+      else if(d===DOC_EXTRATOS_IDX && extratosCompletosDaPessoa(mcol(ms)))val="Encaminhado (extratos)";
       else if(DOCS_CONTRATOS_IDX.includes(d) && mesesComContrato[mcol(ms)])val="Encaminhado (contratos)";
       row.push(val);
     });
