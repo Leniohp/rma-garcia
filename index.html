@@ -131,8 +131,8 @@
     <h3><span class="close" onclick="closeModal()">×</span><span id="m_title"></span></h3>
     <div class="body">
       <div class="drop" id="drop">
-        Arraste o arquivo aqui (Excel, PDF…)<br><small>ou clique para selecionar</small>
-        <input type="file" id="fileInput" style="display:none">
+        <span id="dropTxt">Arraste o arquivo aqui (Excel, PDF…)</span><br><small>ou clique para selecionar</small>
+        <input type="file" id="fileInput" multiple style="display:none">
       </div>
       <h4 style="margin:20px 0 6px">Arquivos enviados</h4>
       <div id="logList"><div style="color:var(--muted);font-size:13px">Nenhum arquivo ainda.</div></div>
@@ -213,6 +213,8 @@ const DOCS = [
 const DOC_EXTRATOS_IDX = 5;
 // linhas de contratos: 16 (idx 15) e 17 (idx 16) ficam verdes se houver contrato no mês
 const DOCS_CONTRATOS_IDX = [15, 16];
+// linhas 7 a 15 (índices 6 a 14) aceitam VÁRIOS arquivos por célula
+const DOCS_MULTI_IDX = [6,7,8,9,10,11,12,13,14];
 // quais contas do módulo Extratos pertencem a cada pessoa do RMA (por índice de conta, começa em 0)
 // pessoaSel: 0=Cairo, 1=Suely, 2=Alice, 3=Thiago
 const CONTAS_POR_PESSOA = {
@@ -278,7 +280,12 @@ async function loadStatus(){
   try{
     const {data,error}=await sb.from("rma").select("*");
     if(error)throw error;
-    (data||[]).forEach(r=>{statusCache[r.cell_key]={path:r.file_path,filename:r.filename,by:r.enviado_por,at:r.created_at};});
+    (data||[]).forEach(r=>{
+      let arquivos = [];
+      if(Array.isArray(r.arquivos)) arquivos = r.arquivos;
+      else if(typeof r.arquivos === "string" && r.arquivos.trim()){ try{ arquivos = JSON.parse(r.arquivos); }catch(e){} }
+      statusCache[r.cell_key]={path:r.file_path,filename:r.filename,by:r.enviado_por,at:r.created_at,arquivos:arquivos};
+    });
   }catch(e){toast("Erro ao carregar: "+e.message);console.error(e);}
 }
 
@@ -343,7 +350,10 @@ async function render(){
     html+=`<tr><td class="doc"><span class="n">${d+1}-</span>${doc}</td>`;
     MESES_SEQ.forEach(ms=>{
       const k=ckey(pessoaSel,d,ms), s=statusCache[k];
-      tot++; if(s)enc++;
+      const isMulti = DOCS_MULTI_IDX.includes(d);
+      const nArqs = (s && Array.isArray(s.arquivos)) ? s.arquivos.length : 0;
+      const preenchido = isMulti ? (nArqs>0) : !!s;
+      tot++; if(preenchido)enc++;
       // linha dos extratos: pinta verde automático se TODAS as contas DA PESSOA estiverem no mês
       if(d===DOC_EXTRATOS_IDX && !s && extratosCompletosDaPessoa(mcol(ms))){
         enc++; // conta como encaminhado no resumo
@@ -351,7 +361,9 @@ async function render(){
       }else if(DOCS_CONTRATOS_IDX.includes(d) && !s && mesesComContrato[mcol(ms)]){
         enc++; // conta como encaminhado no resumo
         html+= `<td class="cell auto" data-mescol="${mcol(ms)}" data-mn="${ms.nome}" data-ma="${ms.ano}" onclick="irParaContratos('${mcol(ms)}')" title="Há contrato(s) cadastrado(s) neste mês. Clique para ver no módulo Contratos."><span class="badge auto">✓</span><span class="autolabel">contratos</span></td>`;
-      }else if(s){
+      }else if(isMulti && preenchido){
+        html+= `<td class="cell ok" data-k="${k}" data-d="${d}" data-mn="${ms.nome}" data-ma="${ms.ano}"><span class="badge ok">✓</span><span class="fname">${nArqs} arquivo${nArqs>1?'s':''}</span></td>`;
+      }else if(!isMulti && s){
         html+= `<td class="cell ok" data-k="${k}" data-d="${d}" data-mn="${ms.nome}" data-ma="${ms.ano}"><span class="badge ok">✓</span><span class="fname">${s.filename||""}</span></td>`;
       }else{
         html+= `<td class="cell" data-k="${k}" data-d="${d}" data-mn="${ms.nome}" data-ma="${ms.ano}"><span class="badge pen">—</span></td>`;
@@ -398,12 +410,34 @@ function openCell(td){
   const d=+td.dataset.d, nome=td.dataset.mn, ano=+td.dataset.ma;
   atual={key:td.dataset.k, docIdx:d, mes:nome, ano};
   m_title.textContent=`${d+1}- ${DOCS[d].slice(0,70)}${DOCS[d].length>70?'…':''} — ${nome}/${String(ano).slice(2)}`;
+  const dt=document.getElementById("dropTxt");
+  if(dt) dt.textContent = DOCS_MULTI_IDX.includes(d) ? "Arraste arquivos aqui (pode vários — Excel, PDF…)" : "Arraste o arquivo aqui (Excel, PDF…)";
   renderLog();modal.classList.add("on");
 }
 function closeModal(){modal.classList.remove("on");}
 
 async function renderLog(){
+  const isMulti = DOCS_MULTI_IDX.includes(atual.docIdx);
   const s=statusCache[atual.key];
+  if(isMulti){
+    const arquivos = (s && Array.isArray(s.arquivos)) ? s.arquivos : [];
+    if(!arquivos.length){
+      logList.innerHTML=`<div style="color:var(--muted);font-size:13px">Nenhum arquivo ainda. Você pode enviar vários (Excel, PDF, etc.).</div>`;
+      return;
+    }
+    let html="";
+    arquivos.forEach((a,i)=>{
+      const dt = a.at ? new Date(a.at).toLocaleString('pt-BR') : "";
+      html+=`<div class="logitem"><span>📄 ${esc(a.filename||"arquivo")}
+        <button class="verbtn" onclick="verArquivoMulti(${i})"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>Ver</button>
+        <button class="verbtn" onclick="baixarArquivoMulti(${i})"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Baixar</button>
+        <button class="verbtn" style="border-color:#7a3a3a;color:#e06464" onclick="removerArquivoMulti(${i})"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Remover</button>
+        </span><span style="color:var(--muted)">${dt}<br>${esc(a.by||"")}</span></div>`;
+    });
+    logList.innerHTML=html;
+    return;
+  }
+  // modo antigo (um arquivo)
   if(s){
     const {data}=await sb.storage.from("rma").createSignedUrl(s.path,3600);
     const url=data?data.signedUrl:"#";
@@ -411,6 +445,63 @@ async function renderLog(){
   }else{
     logList.innerHTML=`<div style="color:var(--muted);font-size:13px">Nenhum arquivo ainda.</div>`;
   }
+}
+
+// escapa texto para HTML
+function esc(s){return (""+(s==null?"":s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+// ---- funções multi-arquivo ----
+async function verArquivoMulti(i){
+  const s=statusCache[atual.key]; if(!s||!s.arquivos||!s.arquivos[i])return;
+  const a=s.arquivos[i]; const nome=a.filename||"arquivo";
+  document.getElementById("pvNome").textContent=nome;
+  const body=document.getElementById("pvBody");
+  body.innerHTML=`<div class="pvmsg">Carregando…</div>`;
+  pvModal.classList.add("on");
+  try{
+    const {data,error}=await sb.storage.from("rma").createSignedUrl(a.path,3600);
+    if(error)throw error;
+    pvUrl=data.signedUrl;
+    const ext=(nome.split(".").pop()||"").toLowerCase();
+    if(ext==="pdf"){
+      body.innerHTML=`<iframe src="${pvUrl}#toolbar=1&navpanes=0" title="Arquivo"></iframe>`;
+    }else if(["jpg","jpeg","png","gif","webp","bmp"].includes(ext)){
+      body.innerHTML=`<img src="${pvUrl}" alt="Arquivo">`;
+    }else if(["xls","xlsx","xlsm","doc","docx","ppt","pptx"].includes(ext)){
+      const officeUrl="https://view.officeapps.live.com/op/embed.aspx?src="+encodeURIComponent(pvUrl);
+      body.innerHTML=`<iframe src="${officeUrl}" title="Arquivo Office"></iframe><div class="pvfallback">Se a planilha não carregar acima em alguns segundos, o arquivo é privado e o visualizador online não conseguiu abri-lo. Use <b>baixar</b> ou <b>abrir em nova aba</b>.</div>`;
+    }else{
+      body.innerHTML=`<div class="pvmsg">Este tipo de arquivo (.${ext}) não pode ser exibido em miniatura aqui.<br>Use o botão de baixar ou abrir em nova aba.</div>`;
+    }
+  }catch(e){ body.innerHTML=`<div class="pvmsg">Não foi possível carregar o arquivo.</div>`; console.error(e); }
+}
+async function baixarArquivoMulti(i){
+  const s=statusCache[atual.key]; if(!s||!s.arquivos||!s.arquivos[i])return;
+  try{
+    const {data,error}=await sb.storage.from("rma").createSignedUrl(s.arquivos[i].path,3600);
+    if(error)throw error; window.open(data.signedUrl,"_blank");
+  }catch(e){toast("Erro ao baixar.");console.error(e);}
+}
+async function removerArquivoMulti(i){
+  const s=statusCache[atual.key]; if(!s||!s.arquivos||!s.arquivos[i])return;
+  if(!confirm(`Remover o arquivo "${s.arquivos[i].filename||''}"?`))return;
+  try{
+    const a=s.arquivos[i];
+    await sb.storage.from("rma").remove([a.path]).catch(()=>{});
+    const novaLista = s.arquivos.filter((_,idx)=>idx!==i);
+    if(novaLista.length){
+      const {error}=await sb.from("rma").update({arquivos:novaLista}).eq("cell_key",atual.key);
+      if(error)throw error;
+      statusCache[atual.key].arquivos=novaLista;
+    }else{
+      // sem arquivos: remove o registro inteiro
+      const {error}=await sb.from("rma").delete().eq("cell_key",atual.key);
+      if(error)throw error;
+      delete statusCache[atual.key];
+    }
+    toast("Arquivo removido.");
+    await render(); renderLog();
+  }catch(e){toast("Erro ao remover: "+e.message);console.error(e);}
 }
 
 let pvUrl=null;
@@ -449,26 +540,42 @@ function pvNovaAba(){if(pvUrl)window.open(pvUrl,"_blank");}
 function pvBaixar(){if(pvUrl)window.open(pvUrl,"_blank");}
 
 drop.onclick=()=>fileInput.click();
-fileInput.onchange=e=>{if(e.target.files[0])upload(e.target.files[0]);};
+fileInput.onchange=async e=>{ const fs=[...e.target.files]; for(const f of fs){ await upload(f); } e.target.value=""; };
 drop.ondragover=e=>{e.preventDefault();drop.classList.add("drag");};
 drop.ondragleave=()=>drop.classList.remove("drag");
-drop.ondrop=e=>{e.preventDefault();drop.classList.remove("drag");if(e.dataTransfer.files[0])upload(e.dataTransfer.files[0]);};
+drop.ondrop=async e=>{e.preventDefault();drop.classList.remove("drag"); const fs=[...e.dataTransfer.files]; for(const f of fs){ await upload(f); } };
 
 async function upload(file){
   const ext = (file.name.split(".").pop()||"dat").toLowerCase();
-  const safe=`${pessoaSel}/${atual.ano}/${atual.docIdx}_${atual.mes}_${Date.now()}.${ext}`;
+  const isMulti = DOCS_MULTI_IDX.includes(atual.docIdx);
+  const safe=`${pessoaSel}/${atual.ano}/${atual.docIdx}_${atual.mes}_${Date.now()}_${Math.random().toString(36).slice(2,7)}.${ext}`;
   toast("Enviando...");
   try{
     const {error:upErr}=await sb.storage.from("rma").upload(safe,file,{upsert:true});
     if(upErr)throw upErr;
-    const {error:dbErr}=await sb.from("rma").upsert({
-      cell_key:atual.key, pessoa_idx:pessoaSel, pessoa:PESSOAS[pessoaSel],
-      doc_idx:atual.docIdx, documento:DOCS[atual.docIdx], mes:atual.mes, ano:atual.ano,
-      filename:file.name, file_path:safe, enviado_por:sessionUser.email
-    },{onConflict:"cell_key"});
-    if(dbErr)throw dbErr;
-    toast("Arquivo salvo ✓");
-    statusCache[atual.key]={path:safe,filename:file.name,by:sessionUser.email,at:new Date().toISOString()};
+    if(isMulti){
+      // adiciona à lista de arquivos da célula
+      const s=statusCache[atual.key];
+      const listaAtual = (s && Array.isArray(s.arquivos)) ? s.arquivos.slice() : [];
+      listaAtual.push({filename:file.name, path:safe, by:sessionUser.email, at:new Date().toISOString()});
+      const {error:dbErr}=await sb.from("rma").upsert({
+        cell_key:atual.key, pessoa_idx:pessoaSel, pessoa:PESSOAS[pessoaSel],
+        doc_idx:atual.docIdx, documento:DOCS[atual.docIdx], mes:atual.mes, ano:atual.ano,
+        arquivos:listaAtual, enviado_por:sessionUser.email
+      },{onConflict:"cell_key"});
+      if(dbErr)throw dbErr;
+      statusCache[atual.key]={...(s||{}), arquivos:listaAtual};
+      toast("Arquivo adicionado ✓");
+    }else{
+      const {error:dbErr}=await sb.from("rma").upsert({
+        cell_key:atual.key, pessoa_idx:pessoaSel, pessoa:PESSOAS[pessoaSel],
+        doc_idx:atual.docIdx, documento:DOCS[atual.docIdx], mes:atual.mes, ano:atual.ano,
+        filename:file.name, file_path:safe, enviado_por:sessionUser.email
+      },{onConflict:"cell_key"});
+      if(dbErr)throw dbErr;
+      statusCache[atual.key]={path:safe,filename:file.name,by:sessionUser.email,at:new Date().toISOString()};
+      toast("Arquivo salvo ✓");
+    }
     await render();renderLog();
   }catch(e){toast("Erro no envio: "+e.message);console.error(e);}
 }
@@ -488,7 +595,10 @@ function exportCSV(){
     let row=[`${d+1}- ${doc.replace(/;/g,",")}`];
     MESES_SEQ.forEach(ms=>{
       let val="Pendente";
-      if(statusCache[ckey(pessoaSel,d,ms)])val="Encaminhado";
+      const s=statusCache[ckey(pessoaSel,d,ms)];
+      const isMulti = DOCS_MULTI_IDX.includes(d);
+      if(isMulti && s && Array.isArray(s.arquivos) && s.arquivos.length){ val=`Encaminhado (${s.arquivos.length} arq.)`; }
+      else if(!isMulti && s){ val="Encaminhado"; }
       else if(d===DOC_EXTRATOS_IDX && extratosCompletosDaPessoa(mcol(ms)))val="Encaminhado (extratos)";
       else if(DOCS_CONTRATOS_IDX.includes(d) && mesesComContrato[mcol(ms)])val="Encaminhado (contratos)";
       row.push(val);
@@ -518,7 +628,14 @@ async function baixarMes(){
     const arquivos=[];
     for(let d=0;d<DOCS.length;d++){
       const s = statusCache[ckey(pessoaSel,d,ms)];
-      if(s && s.path){
+      if(!s) continue;
+      if(DOCS_MULTI_IDX.includes(d) && Array.isArray(s.arquivos)){
+        s.arquivos.forEach((a,idx)=>{
+          const ext=(a.filename.split(".").pop()||"dat");
+          const nome=`${d+1}_${DOCS[d].slice(0,35).replace(/[\/\\:*?"<>|;]/g,"-").trim()}_${idx+1}.${ext}`;
+          arquivos.push({path:a.path, nome});
+        });
+      }else if(s.path){
         const ext = (s.filename.split(".").pop()||"dat");
         const nome = `${d+1}_${DOCS[d].slice(0,40).replace(/[\/\\:*?"<>|;]/g,"-").trim()}.${ext}`;
         arquivos.push({path:s.path, nome});
